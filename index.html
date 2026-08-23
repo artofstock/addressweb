@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1565C0">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>주소록</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700;800&display=swap" rel="stylesheet" onerror="this.remove()">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+<style>
+:root{
+  --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#EEF2F7;
+  --fg:#16202B; --fg-dim:#5B6B7C; --border:#DCE3EA;
+  --accent:#1565C0; --accent-fg:#FFFFFF; --accent-soft:#E3EEFC;
+  --favorite:#E65100; --recent:#FFF3D6; --danger:#D32F2F;
+  --highlight:#FFE58A; --shadow:0 2px 10px rgba(20,30,45,.08);
+  --radius:14px; --safe-top:env(safe-area-inset-top); --safe-bottom:env(safe-area-inset-bottom);
+  --job-1:#C8E6C9; --job-2:#FFCDD2; --job-3:#BBDEFB; --job-4:#D1C4E9; --job-5:#F8BBD0;
+  --job-6:#FFE0B2; --job-7:#B2EBF2; --job-8:#DCEDC8; --job-9:#E1BEE7; --job-10:#B3E5FC;
+  --job-11:#FFECB3; --job-12:#C5CAE9; --job-13:#F0F4C3; --job-14:#CFD8DC;
+}
+[data-theme="dark"]{
+  --bg:#14181D; --surface:#1D2329; --surface-2:#242B32;
+  --fg:#E7ECF1; --fg-dim:#93A1AF; --border:#323B44;
+  --accent:#5B9BEB; --accent-fg:#0C1620; --accent-soft:#1E3552;
+  --favorite:#FFB74D; --recent:#3A2E12; --danger:#EF5350;
+  --highlight:#5D4A17; --shadow:0 2px 14px rgba(0,0,0,.4);
+  --job-1:#25382A; --job-2:#3D2426; --job-3:#20334A; --job-4:#332448;
+  --job-5:#412332; --job-6:#402D18; --job-7:#1E3D3D; --job-8:#2C3820;
+  --job-9:#3A2340; --job-10:#1D3446; --job-11:#443B14; --job-12:#242042;
+  --job-13:#31391C; --job-14:#2C363B;
+}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+html,body{height:100%;}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:'Pretendard',-apple-system,BlinkMacSystemFont,'Malgun Gothic',sans-serif;
+  overscroll-behavior-y:contain; overflow:hidden;
+}
+#app{display:flex; flex-direction:column; height:100vh; height:100dvh;}
+
+/* ── Header ───────────────────────────────── */
+header{
+  background:var(--accent); color:var(--accent-fg);
+  padding:calc(10px + var(--safe-top)) 12px 10px;
+  display:flex; align-items:center; gap:8px; flex-shrink:0;
+}
+header h1{font-size:17px; font-weight:800; margin:0; letter-spacing:-.2px; white-space:nowrap;}
+.icon-btn{
+  border:none; background:rgba(255,255,255,.16); color:var(--accent-fg);
+  width:38px; height:38px; border-radius:10px; font-size:17px;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+}
+.icon-btn:active{background:rgba(255,255,255,.32);}
+.spacer{flex:1;}
+.count-pill{
+  font-size:11.5px; background:rgba(255,255,255,.18); padding:4px 9px;
+  border-radius:20px; font-weight:600; white-space:nowrap;
+}
+
+/* ── Search bar ───────────────────────────── */
+.searchbar{
+  background:var(--accent); padding:0 12px 12px; display:flex; gap:6px; flex-shrink:0;
+}
+.searchbar select{
+  border:none; border-radius:10px; padding:0 8px; height:40px; font-size:13px;
+  background:rgba(255,255,255,.92); color:var(--fg); font-family:inherit; flex-shrink:0; width:78px;
+}
+.search-wrap{flex:1; position:relative;}
+.search-wrap input{
+  width:100%; height:40px; border:none; border-radius:10px; padding:0 34px 0 12px;
+  font-size:15px; background:rgba(255,255,255,.95); color:var(--fg); font-family:inherit;
+}
+.search-wrap .clear-x{
+  position:absolute; right:6px; top:50%; transform:translateY(-50%);
+  border:none; background:transparent; color:var(--fg-dim); font-size:18px; width:28px; height:28px; display:none;
+}
+.search-wrap .clear-x.show{display:block;}
+
+/* ── Filter chips row ─────────────────────── */
+.chiprow{
+  display:flex; gap:6px; padding:8px 12px; overflow-x:auto; flex-shrink:0;
+  background:var(--surface); border-bottom:1px solid var(--border);
+}
+.chiprow::-webkit-scrollbar{display:none;}
+.chip{
+  border:1px solid var(--border); background:var(--surface); color:var(--fg-dim);
+  border-radius:20px; padding:6px 12px; font-size:12.5px; font-weight:600; white-space:nowrap; flex-shrink:0;
+}
+.chip.active{background:var(--accent); border-color:var(--accent); color:var(--accent-fg);}
+
+/* ── List ─────────────────────────────────── */
+main{flex:1; overflow-y:auto; padding:10px 10px calc(90px + var(--safe-bottom));}
+.status-line{font-size:12px; color:var(--fg-dim); padding:2px 4px 8px; display:flex; justify-content:space-between;}
+.card{
+  background:var(--surface); border-radius:var(--radius); padding:12px 14px;
+  margin-bottom:8px; box-shadow:var(--shadow); display:flex; align-items:center; gap:11px;
+  border-left:4px solid var(--border);
+}
+.card.recent{background:linear-gradient(0deg, var(--recent), var(--recent)), var(--surface);}
+.card .avatar{
+  width:42px; height:42px; border-radius:50%; background:var(--surface-2); color:var(--fg-dim);
+  display:flex; align-items:center; justify-content:center; font-weight:700; font-size:15px; flex-shrink:0;
+}
+.card .body{flex:1; min-width:0;}
+.card .name-row{display:flex; align-items:center; gap:6px;}
+.card .name{font-size:15.5px; font-weight:700; color:var(--fg);}
+.card .name.favorite{color:var(--favorite);}
+.card .star{font-size:13px; color:var(--favorite);}
+.card .meta{font-size:12.5px; color:var(--fg-dim); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.card .badge{
+  font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:6px; background:var(--surface-2); color:var(--fg-dim);
+}
+.card .phone{font-size:12px; color:var(--fg-dim); margin-top:3px;}
+.card .actions{display:flex; gap:6px; flex-shrink:0;}
+.card .actions button{
+  width:36px; height:36px; border-radius:50%; border:none; background:var(--surface-2); color:var(--accent);
+  font-size:15px; display:flex; align-items:center; justify-content:center;
+}
+.card .actions button:active{background:var(--accent-soft);}
+mark{background:var(--highlight); color:inherit; border-radius:3px; padding:0 1px;}
+
+.empty-state{
+  text-align:center; padding:60px 20px; color:var(--fg-dim);
+}
+.empty-state .emoji{font-size:44px; margin-bottom:12px;}
+.empty-state h3{margin:0 0 6px; color:var(--fg); font-size:16px;}
+.empty-state p{margin:0; font-size:13px; line-height:1.6;}
+.empty-state button{
+  margin-top:16px; background:var(--accent); color:var(--accent-fg); border:none; padding:11px 22px;
+  border-radius:10px; font-weight:700; font-size:14px;
+}
+
+/* ── Bottom nav ───────────────────────────── */
+nav.bottombar{
+  position:fixed; left:0; right:0; bottom:0; background:var(--surface);
+  border-top:1px solid var(--border); display:flex; padding-bottom:var(--safe-bottom);
+  box-shadow:0 -2px 10px rgba(0,0,0,.06); z-index:20;
+}
+nav.bottombar button{
+  flex:1; border:none; background:transparent; color:var(--fg-dim); padding:9px 0 7px;
+  display:flex; flex-direction:column; align-items:center; gap:2px; font-family:inherit;
+}
+nav.bottombar button .ic{font-size:19px;}
+nav.bottombar button .lb{font-size:10.5px; font-weight:600;}
+nav.bottombar button.active{color:var(--accent);}
+
+/* ── Sheet / Modal ────────────────────────── */
+.overlay{
+  position:fixed; inset:0; background:rgba(10,14,20,.5); z-index:50;
+  display:flex; align-items:flex-end; opacity:0; pointer-events:none; transition:opacity .18s;
+}
+.overlay.show{opacity:1; pointer-events:auto;}
+.overlay.center{align-items:center; justify-content:center; padding:20px;}
+.sheet{
+  background:var(--surface); width:100%; max-height:88vh; border-radius:20px 20px 0 0;
+  padding:14px 18px calc(18px + var(--safe-bottom)); overflow-y:auto;
+  transform:translateY(16px); transition:transform .18s;
+}
+.overlay.show .sheet{transform:translateY(0);}
+.overlay.center .sheet{border-radius:18px; max-width:420px; max-height:82vh;}
+.sheet-handle{width:38px; height:4px; background:var(--border); border-radius:3px; margin:0 auto 12px;}
+.sheet h2{font-size:17px; margin:0 0 4px; font-weight:800;}
+.sheet .sub{font-size:12.5px; color:var(--fg-dim); margin-bottom:14px;}
+.sheet-close{position:absolute; top:14px; right:14px; border:none; background:var(--surface-2); width:30px; height:30px; border-radius:50%; color:var(--fg-dim); font-size:15px;}
+
+.field-row{display:flex; padding:9px 0; border-bottom:1px solid var(--border); align-items:center; gap:10px;}
+.field-row:last-child{border-bottom:none;}
+.field-row .flabel{width:78px; font-size:12.5px; color:var(--fg-dim); font-weight:600; flex-shrink:0;}
+.field-row .fvalue{flex:1; font-size:14.5px; font-weight:600; word-break:break-all;}
+.field-row .fbtn{border:none; background:var(--surface-2); color:var(--accent); width:32px; height:32px; border-radius:9px; font-size:14px;}
+
+.detail-actions{display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:16px 0 4px;}
+.detail-actions button{
+  border:none; background:var(--surface-2); border-radius:12px; padding:11px 4px; font-size:11px; font-weight:700;
+  color:var(--fg); display:flex; flex-direction:column; align-items:center; gap:5px;
+}
+.detail-actions button .ic{font-size:19px;}
+.detail-actions button.on{background:var(--accent-soft); color:var(--accent);}
+
+.big-btn{
+  width:100%; border:none; background:var(--accent); color:var(--accent-fg); padding:13px;
+  border-radius:12px; font-weight:700; font-size:14.5px; margin-top:10px; font-family:inherit;
+}
+.big-btn.ghost{background:var(--surface-2); color:var(--fg);}
+.big-btn.danger{background:var(--danger); color:#fff;}
+
+.menu-list{display:flex; flex-direction:column; gap:2px;}
+.menu-item{
+  display:flex; align-items:center; gap:13px; padding:13px 4px; border:none; background:transparent;
+  font-family:inherit; font-size:15px; color:var(--fg); width:100%; text-align:left; border-bottom:1px solid var(--border);
+}
+.menu-item:last-child{border-bottom:none;}
+.menu-item .ic{width:24px; text-align:center; font-size:18px;}
+.menu-item .desc{font-size:11.5px; color:var(--fg-dim); font-weight:400; display:block;}
+.menu-item .mtitle{font-weight:700;}
+
+.formfield{margin-bottom:12px;}
+.formfield label{display:block; font-size:12.5px; font-weight:700; color:var(--fg-dim); margin-bottom:5px;}
+.formfield input, .formfield select{
+  width:100%; height:42px; border:1px solid var(--border); border-radius:10px; padding:0 12px;
+  font-size:14.5px; background:var(--bg); color:var(--fg); font-family:inherit;
+}
+.formfield .hint{font-size:11px; color:var(--fg-dim); margin-top:4px; line-height:1.5;}
+
+.checkline{display:flex; align-items:center; gap:10px; padding:9px 2px; border-bottom:1px solid var(--border); font-size:14px;}
+.checkline:last-child{border-bottom:none;}
+.checkline input{width:18px; height:18px; accent-color:var(--accent);}
+.checkline label{flex:1;}
+
+.stat-tabs{display:flex; gap:6px; margin-bottom:10px;}
+.stat-tabs button{flex:1; padding:9px 0; border-radius:10px; border:1px solid var(--border); background:var(--surface); color:var(--fg-dim); font-weight:700; font-size:13px;}
+.stat-tabs button.active{background:var(--accent); border-color:var(--accent); color:var(--accent-fg);}
+.stat-row{display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--border);}
+.stat-row .sname{width:78px; font-size:13px; font-weight:700; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.stat-row .sbar-wrap{flex:1; background:var(--surface-2); border-radius:6px; height:16px; overflow:hidden;}
+.stat-row .sbar{height:100%; background:var(--accent); border-radius:6px;}
+.stat-row .scount{width:50px; text-align:right; font-size:12.5px; color:var(--fg-dim); font-weight:600; flex-shrink:0;}
+
+.toast{
+  position:fixed; left:50%; bottom:calc(76px + var(--safe-bottom)); transform:translateX(-50%);
+  background:#1B222A; color:#fff; padding:11px 20px; border-radius:24px; font-size:13.5px; font-weight:600;
+  box-shadow:0 4px 16px rgba(0,0,0,.28); z-index:100; opacity:0; pointer-events:none; transition:opacity .2s, transform .2s;
+  white-space:nowrap; max-width:88vw; overflow:hidden; text-overflow:ellipsis;
+}
+.toast.show{opacity:1; transform:translateX(-50%) translateY(-6px);}
+
+.progress-wrap{height:6px; background:var(--surface-2); border-radius:4px; overflow:hidden; margin:10px 0;}
+.progress-bar{height:100%; width:0%; background:var(--accent); transition:width .2s;}
+
+.import-drop{
+  border:2px dashed var(--border); border-radius:14px; padding:26px 14px; text-align:center; color:var(--fg-dim);
+  font-size:13px; margin-bottom:10px;
+}
+.import-drop .emoji{font-size:30px; display:block; margin-bottom:8px;}
+input[type=file]{display:none;}
+
+::-webkit-scrollbar{width:0; height:0;}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <h1>📇 주소록</h1>
+    <span class="count-pill" id="countPill">0건</span>
+    <div class="spacer"></div>
+    <button class="icon-btn" id="btnTheme" title="테마 전환">🌓</button>
+  </header>
+
+  <div class="searchbar">
+    <select id="scopeSelect"></select>
+    <div class="search-wrap">
+      <input id="searchInput" type="search" placeholder="이름·팀·전화번호 검색 (초성 가능)" autocomplete="off" enterkeyhint="search">
+      <button class="clear-x" id="clearSearchBtn">✕</button>
+    </div>
+  </div>
+
+  <div class="chiprow" id="chipRow">
+    <button class="chip active" data-filter="all">전체</button>
+    <button class="chip" data-filter="favorites">⭐ 즐겨찾기</button>
+    <button class="chip" data-filter="recent">🕐 최근</button>
+    <button class="chip" data-sort="team">팀명순</button>
+    <button class="chip" data-sort="name">이름순</button>
+    <button class="chip" data-sort="job">직책순</button>
+  </div>
+
+  <main id="listArea">
+    <div class="status-line"><span id="statusText">불러오는 중…</span><span id="statusExtra"></span></div>
+    <div id="listContainer"></div>
+  </main>
+
+  <nav class="bottombar">
+    <button class="active" data-nav="list"><span class="ic">📋</span><span class="lb">목록</span></button>
+    <button data-nav="stats"><span class="ic">📊</span><span class="lb">통계</span></button>
+    <button id="navAddBtn"><span class="ic">➕</span><span class="lb">추가</span></button>
+    <button data-nav="data"><span class="ic">💾</span><span class="lb">가져오기/내보내기</span></button>
+    <button data-nav="settings"><span class="ic">⚙️</span><span class="lb">설정</span></button>
+  </nav>
+</div>
+
+<!-- ── 상세 정보 시트 ────────────────────────────── -->
+<div class="overlay" id="overlayDetail">
+  <div class="sheet" id="sheetDetail" style="position:relative;">
+    <button class="sheet-close" data-close>✕</button>
+    <div class="sheet-handle"></div>
+    <h2 id="detailName">-</h2>
+    <div class="sub" id="detailSub">-</div>
+    <div id="detailFields"></div>
+    <div class="detail-actions" id="detailActions"></div>
+    <button class="big-btn ghost" data-close>닫기</button>
+  </div>
+</div>
+
+<!-- ── 연락처 추가/수정 시트 ─────────────────────── -->
+<div class="overlay" id="overlayForm">
+  <div class="sheet" style="position:relative;">
+    <button class="sheet-close" data-close>✕</button>
+    <div class="sheet-handle"></div>
+    <h2 id="formTitle">연락처 추가</h2>
+    <div class="sub">필수 항목은 없지만, 아이디는 즐겨찾기·메일 발송의 기준이 됩니다.</div>
+    <div id="formFields"></div>
+    <button class="big-btn" id="formSaveBtn">저장</button>
+    <button class="big-btn danger" id="formDeleteBtn" style="display:none;">삭제</button>
+  </div>
+</div>
+
+<!-- ── 통계 시트 ────────────────────────────────── -->
+<div class="overlay" id="overlayStats">
+  <div class="sheet" style="position:relative;">
+    <button class="sheet-close" data-close>✕</button>
+    <div class="sheet-handle"></div>
+    <h2>인원 통계</h2>
+    <div class="sub" id="statsSub">-</div>
+    <div class="stat-tabs">
+      <button class="active" data-stat="team">팀별</button>
+      <button data-stat="job">직책별</button>
+    </div>
+    <div id="statsBody"></div>
+  </div>
+</div>
+
+<!-- ── 가져오기/내보내기 시트 ────────────────────── -->
+<div class="overlay" id="overlayData">
+  <div class="sheet" style="position:relative;">
+    <button class="sheet-close" data-close>✕</button>
+    <div class="sheet-handle"></div>
+    <h2>가져오기 / 내보내기</h2>
+    <div class="sub">CSV · Excel(xlsx) · JSON 파일을 지원합니다.</div>
+
+    <div class="import-drop" id="importDrop">
+      <span class="emoji">📂</span>
+      파일을 선택해 연락처를 가져오세요<br>(CSV / XLSX / JSON)
+    </div>
+    <input type="file" id="fileInput" accept=".csv,.xlsx,.xls,.json">
+    <button class="big-btn ghost" id="btnPickFile">파일 선택</button>
+    <div class="progress-wrap" id="importProgressWrap" style="display:none;"><div class="progress-bar" id="importProgress"></div></div>
+
+    <div class="menu-list" style="margin-top:18px;">
+      <div class="mtitle" style="font-size:13px; color:var(--fg-dim); padding:6px 4px;">내보내기</div>
+      <button class="menu-item" id="btnExportCsv"><span class="ic">📄</span><div><div class="mtitle">CSV로 내보내기</div><span class="desc">엑셀에서 열 수 있는 형식</span></div></button>
+      <button class="menu-item" id="btnExportXlsx"><span class="ic">📊</span><div><div class="mtitle">Excel(xlsx)로 내보내기</div><span class="desc">서식이 적용된 스프레드시트</span></div></button>
+      <button class="menu-item" id="btnExportJson"><span class="ic">🗂️</span><div><div class="mtitle">JSON으로 내보내기</div><span class="desc">백업 / 다른 기기로 이전용</span></div></button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 설정 시트 ────────────────────────────────── -->
+<div class="overlay" id="overlaySettings">
+  <div class="sheet" style="position:relative;">
+    <button class="sheet-close" data-close>✕</button>
+    <div class="sheet-handle"></div>
+    <h2>설정</h2>
+    <div class="formfield">
+      <label>메일 도메인 (아이디 뒤에 자동으로 붙습니다)</label>
+      <input type="text" id="mailDomainInput" placeholder="@company.com">
+      <div class="hint">아이디가 이미 이메일 형식이면 그대로 사용합니다.</div>
+    </div>
+    <div class="menu-list">
+      <button class="menu-item" id="btnToggleThemeSettings"><span class="ic">🌓</span><div><div class="mtitle">다크 / 라이트 모드</div><span class="desc" id="themeStateDesc">현재: 라이트</span></div></button>
+      <button class="menu-item" id="btnClearSearchHistory"><span class="ic">🕘</span><div><div class="mtitle">검색 기록 지우기</div></div></button>
+      <button class="menu-item" id="btnAddSample" style="display:none;"><span class="ic">✨</span><div><div class="mtitle">샘플 데이터 추가</div></div></button>
+      <button class="menu-item" id="btnClearAll"><span class="ic">🗑️</span><div><div class="mtitle" style="color:var(--danger);">전체 데이터 삭제</div><span class="desc">연락처·즐겨찾기·최근기록을 모두 삭제합니다</span></div></button>
+    </div>
+    <div class="sub" style="margin-top:14px; text-align:center;">주소록 웹 v1.0 · 데이터는 이 기기(브라우저)에만 저장됩니다</div>
+  </div>
+</div>
+
+<!-- ── 대량 작업(다중선택) 시트 ──────────────────── -->
+<div class="overlay" id="overlayBulk">
+  <div class="sheet" style="position:relative;">
+    <button class="sheet-close" data-close>✕</button>
+    <div class="sheet-handle"></div>
+    <h2 id="bulkTitle">0명 선택됨</h2>
+    <div class="menu-list">
+      <button class="menu-item" id="bulkFav"><span class="ic">⭐</span><div class="mtitle">즐겨찾기 추가</div></button>
+      <button class="menu-item" id="bulkUnfav"><span class="ic">🗑️</span><div class="mtitle">즐겨찾기 제거</div></button>
+      <button class="menu-item" id="bulkMail"><span class="ic">📧</span><div class="mtitle">메일 작성 (전체 수신자)</div></button>
+      <button class="menu-item" id="bulkCopy"><span class="ic">📄</span><div class="mtitle">정보 복사</div></button>
+      <button class="menu-item" id="bulkDelete"><span class="ic">🗑️</span><div class="mtitle" style="color:var(--danger);">삭제</div></button>
+    </div>
+    <button class="big-btn ghost" data-close>선택 해제</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
