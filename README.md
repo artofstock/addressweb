@@ -20,7 +20,7 @@
 ## 배포 방법 (GitHub Pages 예시)
 1. 이 폴더 전체를 새 저장소(예: `address-book-web`)에 올립니다.
 2. 저장소 Settings → Pages → Branch를 `main` / `root`로 설정합니다.
-3. `https://<계정>.github.io/address-book-web/` 로 접속되면 완료입니다.
+3. `https://artofstock.github.io/addressweb/` 로 접속되면 완료입니다.
 4. 안드로이드 크롬에서 접속 후 우측 상단 메뉴 → **"홈 화면에 추가"**를 선택하면
    일반 앱처럼 아이콘이 생기고 전체화면으로 실행됩니다.
 
