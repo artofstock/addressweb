@@ -18,7 +18,7 @@
   주기적으로 설정 → 내보내기(JSON)로 백업하는 것을 권장합니다.
 
 ## 배포 방법 (GitHub Pages 예시)
-1. 이 폴더 전체를 새 저장소(예: `address-book-web`)에 올립니다.
+1. 이 폴더 전체를 새 저장소(예: `addressweb`)에 올립니다.
 2. 저장소 Settings → Pages → Branch를 `main` / `root`로 설정합니다.
 3. `https://artofstock.github.io/addressweb/` 로 접속되면 완료입니다.
 4. 안드로이드 크롬에서 접속 후 우측 상단 메뉴 → **"홈 화면에 추가"**를 선택하면
