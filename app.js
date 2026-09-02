@@ -5,8 +5,8 @@
 ══════════════════════════════════════════════════════════════ */
 'use strict';
 
-const COLUMNS = ["팀명", "직책", "성명", "아이디", "전화번호", "휴대전화번호"];
-const FIELD_LABELS = { 팀명: "팀명", 직책: "직책", 성명: "성명", 아이디: "아이디", 전화번호: "전화번호", 휴대전화번호: "휴대전화" };
+const COLUMNS = ["팀명", "직책", "성명", "아이디", "전화번호", "휴대전화번호", "그룹"];
+const FIELD_LABELS = { 팀명: "팀명", 직책: "직책", 성명: "성명", 아이디: "아이디", 전화번호: "전화번호", 휴대전화번호: "휴대전화", 그룹: "그룹" };
 const SEARCH_FIELDS = ["전체", ...COLUMNS];
 const RECENT_MAX = 20;
 const SEARCH_HISTORY_MAX = 10;
@@ -141,7 +141,7 @@ const state = {
   editingUid: null,
 };
 
-function persistContacts() { Store.saveJSON(LS.contacts, state.contacts); AutoSave.schedule(); }
+function persistContacts() { Store.saveJSON(LS.contacts, state.contacts); renderGroupTabs(); AutoSave.schedule(); }
 function persistFavorites() { Store.saveJSON(LS.favorites, state.favorites); }
 function persistRecent() { Store.saveJSON(LS.recent, state.recent); }
 function persistConfig() { Store.saveJSON(LS.config, state.config); }
@@ -169,6 +169,7 @@ function init() {
     el.scopeSelect.appendChild(opt);
   });
   setupSearchHistoryList();
+  renderGroupTabs();
   bindEvents();
   refreshView();
   registerServiceWorker();
@@ -192,6 +193,10 @@ function currentBaseList() {
   if (state.filterMode === "recent") {
     const idx = new Map(state.recent.map((id, i) => [id, i]));
     return state.contacts.filter(c => idx.has(contactUid(c))).sort((a, b) => idx.get(contactUid(a)) - idx.get(contactUid(b)));
+  }
+  if (state.filterMode.startsWith("group:")) {
+    const g = state.filterMode.slice(6);
+    return state.contacts.filter(c => (c.그룹 || "").trim() === g);
   }
   return state.contacts;
 }
@@ -246,10 +251,50 @@ function refreshView() {
 function updateCountPill() {
   el.countPill.textContent = `${state.contacts.length}건`;
 }
+/* ── 그룹 탭 (체납자/전화상담원/방문상담원 등, 사용자가 자유롭게 지정) ── */
+function setFilterMode(mode) {
+  state.filterMode = mode;
+  document.querySelectorAll("#chipRow [data-filter]").forEach(c => c.classList.toggle("active", c.dataset.filter === mode));
+  document.querySelectorAll("#groupTabRow [data-group]").forEach(c => c.classList.toggle("active", ("group:" + c.dataset.group) === mode));
+  refreshView();
+}
+function getDistinctGroups() {
+  return [...new Set(state.contacts.map(c => (c.그룹 || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "ko"));
+}
+function renderGroupTabs() {
+  const row = document.getElementById("groupTabRow");
+  const groups = getDistinctGroups();
+  updateGroupSuggestList(groups);
+  if (!row) return;
+  if (!groups.length) {
+    row.innerHTML = "";
+    row.style.display = "none";
+    if (state.filterMode.startsWith("group:")) setFilterMode("all");
+    return;
+  }
+  row.style.display = "flex";
+  const currentGroup = state.filterMode.startsWith("group:") ? state.filterMode.slice(6) : null;
+  if (currentGroup && !groups.includes(currentGroup)) setFilterMode("all");
+  row.innerHTML = groups.map(g =>
+    `<button class="chip${g === currentGroup ? " active" : ""}" data-group="${escapeHtml(g)}">🏷️ ${escapeHtml(g)}</button>`
+  ).join("");
+}
+function updateGroupSuggestList(groups) {
+  const list = groups || getDistinctGroups();
+  let dl = document.getElementById("groupSuggestList");
+  if (!dl) {
+    dl = document.createElement("datalist");
+    dl.id = "groupSuggestList";
+    document.body.appendChild(dl);
+  }
+  dl.innerHTML = list.map(g => `<option value="${escapeHtml(g)}">`).join("");
+}
 function updateStatus(query) {
   const n = state.currentDisplay.length;
   if (state.filterMode === "favorites") el.statusText.textContent = `⭐ 즐겨찾기 ${n}건`;
   else if (state.filterMode === "recent") el.statusText.textContent = `🕐 최근 열람 ${n}건`;
+  else if (state.filterMode.startsWith("group:")) el.statusText.textContent = `🏷️ ${state.filterMode.slice(6)} ${n}건`;
   else if (query) el.statusText.textContent = `'${query}' 검색결과 ${n}건`;
   else el.statusText.textContent = `전체 ${n}건 표시`;
   el.statusExtra.textContent = state.sortField ? `정렬: ${FIELD_LABELS[state.sortField]} ${state.sortReverse ? "↓" : "↑"}` : "";
@@ -319,6 +364,7 @@ function buildCard(c) {
         <span class="name${isFav ? " favorite" : ""}">${highlightHtml(c.성명, state.highlightTerms)}</span>
         ${isFav ? '<span class="star">⭐</span>' : ""}
         ${c.직책 ? `<span class="badge">${highlightHtml(c.직책, state.highlightTerms)}</span>` : ""}
+        ${c.그룹 ? `<span class="badge group">${highlightHtml(c.그룹, state.highlightTerms)}</span>` : ""}
       </div>
       <div class="meta">${highlightHtml(c.팀명, state.highlightTerms) || "&nbsp;"}</div>
       ${phone ? `<div class="phone">📱 ${highlightHtml(formatPhone(phone), state.highlightTerms)}</div>` : ""}
@@ -525,7 +571,7 @@ function openForm(existing) {
   fields.innerHTML = COLUMNS.map(k => `
     <div class="formfield">
       <label>${FIELD_LABELS[k]}${k === "휴대전화번호" || k === "전화번호" ? " (숫자만 입력 가능)" : ""}</label>
-      <input type="${k.includes("전화번호") ? "tel" : "text"}" data-field="${k}" value="${escapeHtml(existing ? (existing[k] || "") : "")}">
+      <input type="${k.includes("전화번호") ? "tel" : "text"}" data-field="${k}" value="${escapeHtml(existing ? (existing[k] || "") : "")}"${k === "그룹" ? ' list="groupSuggestList" placeholder="예: 체납자, 전화상담원, 방문상담원"' : ""}>
     </div>
   `).join("");
   Sheets.open("form");
@@ -1082,9 +1128,7 @@ function bindEvents() {
     const chip = e.target.closest(".chip");
     if (!chip) return;
     if (chip.dataset.filter) {
-      state.filterMode = chip.dataset.filter;
-      el.chipRow.querySelectorAll("[data-filter]").forEach(c => c.classList.toggle("active", c === chip));
-      refreshView();
+      setFilterMode(chip.dataset.filter);
     } else if (chip.dataset.sort) {
       const field = chip.dataset.sort === "team" ? "팀명" : chip.dataset.sort === "name" ? "성명" : "직책";
       if (state.sortField === field) state.sortReverse = !state.sortReverse;
@@ -1092,6 +1136,15 @@ function bindEvents() {
       refreshView();
     }
   });
+
+  const groupTabRow = document.getElementById("groupTabRow");
+  if (groupTabRow) {
+    groupTabRow.addEventListener("click", (e) => {
+      const chip = e.target.closest(".chip");
+      if (!chip || !chip.dataset.group) return;
+      setFilterMode("group:" + chip.dataset.group);
+    });
+  }
 
   document.querySelectorAll("[data-close]").forEach(btn => {
     btn.addEventListener("click", (e) => {
