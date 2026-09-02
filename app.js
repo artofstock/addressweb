@@ -130,7 +130,7 @@ const state = {
   contacts: Store.loadJSON(LS.contacts, []),
   favorites: Store.loadJSON(LS.favorites, {}),        // uid -> contact dict
   recent: Store.loadJSON(LS.recent, []),               // [uid,...]
-  config: Store.loadJSON(LS.config, { theme: "light", mailDomain: "@company.com", searchHistory: [] }),
+  config: Store.loadJSON(LS.config, { theme: "light", mailDomain: "@company.com", searchHistory: [], autoSaveEnabled: false, autoDownloadBackup: true }),
   currentDisplay: [],
   highlightTerms: [],
   filterMode: "all",       // all | favorites | recent
@@ -141,7 +141,7 @@ const state = {
   editingUid: null,
 };
 
-function persistContacts() { Store.saveJSON(LS.contacts, state.contacts); }
+function persistContacts() { Store.saveJSON(LS.contacts, state.contacts); AutoSave.schedule(); }
 function persistFavorites() { Store.saveJSON(LS.favorites, state.favorites); }
 function persistRecent() { Store.saveJSON(LS.recent, state.recent); }
 function persistConfig() { Store.saveJSON(LS.config, state.config); }
@@ -172,6 +172,7 @@ function init() {
   bindEvents();
   refreshView();
   registerServiceWorker();
+  AutoSave.init();
 }
 
 function setupSearchHistoryList() {
@@ -785,20 +786,249 @@ function exportJson() {
   downloadBlob(blob, `주소록_${todayStr()}.json`);
   toast("JSON으로 내보냈습니다");
 }
-function exportXlsx() {
-  if (!state.contacts.length) { toast("내보낼 데이터가 없습니다"); return; }
-  if (typeof XLSX === "undefined") { toast("엑셀 파서를 불러오지 못했습니다"); return; }
+function buildXlsxWorkbook() {
   const ws = XLSX.utils.json_to_sheet(state.contacts, { header: COLUMNS });
   ws["!cols"] = COLUMNS.map(k => ({ wch: Math.max(k.length + 4, 14) }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "연락처");
-  XLSX.writeFile(wb, `주소록_${todayStr()}.xlsx`);
+  return wb;
+}
+function buildXlsxBlob() {
+  const out = XLSX.write(buildXlsxWorkbook(), { bookType: "xlsx", type: "array" });
+  return new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+function exportXlsx() {
+  if (!state.contacts.length) { toast("내보낼 데이터가 없습니다"); return; }
+  if (typeof XLSX === "undefined") { toast("엑셀 파서를 불러오지 못했습니다"); return; }
+  XLSX.writeFile(buildXlsxWorkbook(), `주소록_${todayStr()}.xlsx`);
   toast("Excel로 내보냈습니다");
 }
 function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}`;
 }
+
+/* ── 자동 저장 (Excel) ────────────────────────────────────── */
+// 지원 브라우저(File System Access API, 대부분의 안드로이드/데스크톱 Chrome·Edge):
+//   최초 1회 저장 위치를 선택하면, 그 뒤로는 연락처가 바뀔 때마다
+//   같은 파일에 조용히 덮어써서 저장합니다.
+// 미지원 브라우저(iOS Safari, Firefox 등):
+//   변경 후 일정 시간이 지나거나 앱을 나갈 때, 날짜가 찍힌 엑셀 파일을
+//   자동으로 다운로드 폴더에 저장합니다(완전한 자동 덮어쓰기는 불가).
+const AutoSave = {
+  DB_NAME: "ab_autosave_db",
+  STORE: "handles",
+  KEY: "xlsxHandle",
+  handle: null,
+  saving: false,
+  dirty: false,
+  needsReconnect: false,
+  lastSavedAt: null,
+  timer: null,
+  fallbackTimer: null,
+  lastFallbackAt: 0,
+
+  supported() {
+    return typeof window.showSaveFilePicker === "function";
+  },
+
+  _dbPromise: null,
+  _openDb() {
+    if (this._dbPromise) return this._dbPromise;
+    this._dbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(this.DB_NAME, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(this.STORE);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return this._dbPromise;
+  },
+  async _idbGet(key) {
+    const db = await this._openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(this.STORE, "readonly");
+      const req = tx.objectStore(this.STORE).get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  },
+  async _idbSet(key, val) {
+    const db = await this._openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(this.STORE, "readwrite");
+      tx.objectStore(this.STORE).put(val, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  },
+  async _idbDelete(key) {
+    const db = await this._openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(this.STORE, "readwrite");
+      tx.objectStore(this.STORE).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  },
+
+  // 앱 시작 시, 이전에 연결해 둔 파일이 있으면 조용히(권한 요청 없이) 복원 시도
+  async init() {
+    if (!this.supported() || !state.config.autoSaveEnabled) { this.updateStatusUI(); return; }
+    try {
+      const handle = await this._idbGet(this.KEY);
+      if (!handle) { state.config.autoSaveEnabled = false; persistConfig(); this.updateStatusUI(); return; }
+      this.handle = handle;
+      const perm = await handle.queryPermission({ mode: "readwrite" });
+      this.needsReconnect = perm !== "granted";
+    } catch (e) {
+      console.warn("자동 저장 초기화 실패", e);
+    }
+    this.updateStatusUI();
+  },
+
+  // 사용자 클릭(제스처) 컨텍스트에서만 호출되어야 함
+  async connect() {
+    if (!this.supported()) { toast("이 브라우저는 자동 파일 저장을 지원하지 않습니다"); return; }
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: "주소록_자동저장.xlsx",
+        types: [{ description: "Excel 파일", accept: { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"] } }],
+      });
+      this.handle = handle;
+      this.needsReconnect = false;
+      await this._idbSet(this.KEY, handle);
+      state.config.autoSaveEnabled = true;
+      persistConfig();
+      await this.writeNow(true);
+      toast("✅ 자동 저장 파일이 연결되었습니다. 이제부터 변경 시 자동으로 저장됩니다");
+    } catch (e) {
+      if (e.name !== "AbortError") { console.error(e); toast("자동 저장 연결 실패: " + e.message); }
+    }
+    this.updateStatusUI();
+  },
+
+  async disconnect() {
+    this.handle = null;
+    this.needsReconnect = false;
+    state.config.autoSaveEnabled = false;
+    persistConfig();
+    try { await this._idbDelete(this.KEY); } catch (e) {}
+    this.updateStatusUI();
+    toast("자동 저장이 해제되었습니다 (기존 파일은 삭제되지 않습니다)");
+  },
+
+  // 권한이 만료된 경우, 버튼 클릭(제스처) 컨텍스트에서 재요청
+  async reconnectPermission() {
+    if (!this.handle) return this.connect();
+    try {
+      const perm = await this.handle.requestPermission({ mode: "readwrite" });
+      if (perm === "granted") {
+        this.needsReconnect = false;
+        await this.writeNow(true);
+        toast("✅ 자동 저장이 다시 연결되었습니다");
+      } else {
+        toast("권한이 거부되었습니다");
+      }
+    } catch (e) { console.error(e); toast("재연결 실패: " + e.message); }
+    this.updateStatusUI();
+  },
+
+  handleConnectClick() {
+    if (this.handle && this.needsReconnect) this.reconnectPermission();
+    else this.connect();
+  },
+
+  // 연락처가 바뀔 때마다 호출됨 (persistContacts 안에서)
+  schedule() {
+    this.dirty = true;
+    if (this.supported() && state.config.autoSaveEnabled && this.handle) {
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => this.writeNow(), 1500);
+    } else if (!this.supported()) {
+      clearTimeout(this.fallbackTimer);
+      this.fallbackTimer = setTimeout(() => this.maybeFallbackDownload(), 3000);
+    }
+  },
+
+  async writeNow(silent) {
+    if (!this.handle || this.saving || typeof XLSX === "undefined") return;
+    this.saving = true;
+    try {
+      const perm = await this.handle.queryPermission({ mode: "readwrite" });
+      if (perm !== "granted") { this.needsReconnect = true; this.updateStatusUI(); this.saving = false; return; }
+      const blob = buildXlsxBlob();
+      const writable = await this.handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      this.dirty = false;
+      this.lastSavedAt = new Date();
+      this.needsReconnect = false;
+    } catch (e) {
+      console.warn("자동 저장 실패", e);
+      if (!silent) toast("자동 저장 실패: " + e.message);
+    } finally {
+      this.saving = false;
+      this.updateStatusUI();
+    }
+  },
+
+  // File System Access API 미지원 브라우저용: 마지막 저장 후 일정 시간이 지나야 재다운로드
+  maybeFallbackDownload() {
+    if (this.supported() || state.config.autoDownloadBackup === false) return;
+    if (typeof XLSX === "undefined" || !state.contacts.length) return;
+    const MIN_INTERVAL = 5 * 60 * 1000;
+    const now = Date.now();
+    if (now - this.lastFallbackAt < MIN_INTERVAL) return;
+    this.lastFallbackAt = now;
+    this.dirty = false;
+    downloadBlob(buildXlsxBlob(), `주소록_자동백업_${todayStr()}.xlsx`);
+    toast("📥 자동 백업 엑셀 파일이 다운로드되었습니다");
+  },
+
+  // 탭을 나가거나 앱을 백그라운드로 보낼 때, 저장되지 않은 변경사항을 즉시 백업
+  forceFallbackIfDirty() {
+    if (this.supported() || state.config.autoDownloadBackup === false) return;
+    if (!this.dirty || typeof XLSX === "undefined" || !state.contacts.length) return;
+    this.lastFallbackAt = Date.now();
+    this.dirty = false;
+    downloadBlob(buildXlsxBlob(), `주소록_자동백업_${todayStr()}.xlsx`);
+  },
+
+  updateStatusUI() {
+    const box = document.getElementById("autoSaveStatus");
+    const connectBtn = document.getElementById("btnAutoSaveConnect");
+    const disconnectBtn = document.getElementById("btnAutoSaveDisconnect");
+    const downloadWrap = document.getElementById("autoDownloadToggleWrap");
+    const downloadToggle = document.getElementById("autoDownloadToggle");
+    if (!box) return;
+
+    if (!this.supported()) {
+      box.textContent = "이 브라우저는 파일 자동저장을 지원하지 않습니다. 대신 변경 후 자동으로 엑셀 파일이 다운로드됩니다.";
+      if (connectBtn) connectBtn.style.display = "none";
+      if (disconnectBtn) disconnectBtn.style.display = "none";
+      if (downloadWrap) downloadWrap.style.display = "flex";
+      if (downloadToggle) downloadToggle.checked = state.config.autoDownloadBackup !== false;
+      return;
+    }
+    if (downloadWrap) downloadWrap.style.display = "none";
+
+    if (this.handle && state.config.autoSaveEnabled && !this.needsReconnect) {
+      const t = this.lastSavedAt ? this.lastSavedAt.toLocaleTimeString("ko-KR") : "저장 대기 중";
+      box.textContent = `✅ 연결됨 · 마지막 저장: ${t}`;
+      if (connectBtn) connectBtn.style.display = "none";
+      if (disconnectBtn) disconnectBtn.style.display = "";
+    } else if (this.handle && this.needsReconnect) {
+      box.textContent = "⚠️ 권한이 만료되었습니다. 다시 연결해주세요.";
+      if (connectBtn) { connectBtn.style.display = ""; connectBtn.textContent = "다시 연결하기"; }
+      if (disconnectBtn) disconnectBtn.style.display = "";
+    } else {
+      box.textContent = "연결되지 않음 — 연결하면 변경 시마다 자동으로 저장됩니다.";
+      if (connectBtn) { connectBtn.style.display = ""; connectBtn.textContent = "엑셀 자동저장 파일 연결"; }
+      if (disconnectBtn) disconnectBtn.style.display = "none";
+    }
+  },
+};
+window.AutoSave = AutoSave;
 
 /* ── 시트(모달) 관리 ──────────────────────────────────────── */
 const Sheets = {
@@ -812,6 +1042,7 @@ const Sheets = {
     if (name === "settings") {
       $("#mailDomainInput").value = state.config.mailDomain || "";
       $("#themeStateDesc").textContent = `현재: ${state.config.theme === "dark" ? "다크" : "라이트"}`;
+      AutoSave.updateStatusUI();
     }
   },
   close(name) {
@@ -925,10 +1156,27 @@ function bindEvents() {
     }
   });
 
+  $("#btnAutoSaveConnect").addEventListener("click", () => AutoSave.handleConnectClick());
+  $("#btnAutoSaveDisconnect").addEventListener("click", () => {
+    if (confirm("자동 저장을 해제하시겠습니까? 지금까지 저장된 파일은 그대로 남아있습니다.")) AutoSave.disconnect();
+  });
+  const downloadToggle = $("#autoDownloadToggle");
+  if (downloadToggle) {
+    downloadToggle.addEventListener("change", (e) => {
+      state.config.autoDownloadBackup = e.target.checked;
+      persistConfig();
+      toast(e.target.checked ? "자동 다운로드 백업이 켜졌습니다" : "자동 다운로드 백업이 꺼졌습니다");
+    });
+  }
+
   bindBulkActions();
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") Sheets.closeAll();
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") AutoSave.forceFallbackIfDirty();
   });
 }
 
